@@ -7,10 +7,6 @@ import tkinter.messagebox
 from tkinter import *
 from tkinter.messagebox import *
 import tkinter as tk
-import numpy as np
-import cv2
-import time
-import sys, os
 import datetime
 import inspect
 import ctypes
@@ -19,7 +15,7 @@ from PIL import Image, ImageTk
 from ctypes import *
 from tkinter import ttk
 
-import time, datetime
+import datetime
 # sys.path.append("./MvImport")
 from MvImport.MvCameraControl_class import *
 
@@ -48,7 +44,7 @@ class CameraOperation():
 
     def __init__(self, obj_cam, st_device_list, n_connect_num=0, b_open_device=False, b_start_grabbing=False,
                  h_thread_handle=None, \
-                 b_thread_closed=False, st_frame_info=None, b_exit=False, b_save_bmp=False, b_save_jpg=False,
+                 b_thread_closed=False, st_frame_info=None, b_exit=False, b_save_bmp=False, b_save_tif=False,
                  buf_save_image=None, \
                  n_save_image_size=0, frame_rate=0, exposure_time=0, gain=0):
 
@@ -58,10 +54,13 @@ class CameraOperation():
         self.b_open_device = b_open_device
         self.b_start_grabbing = b_start_grabbing
         self.b_thread_closed = b_thread_closed
-        self.st_frame_info = st_frame_info
+        st_frame_info = st_frame_info
         self.b_exit = b_exit
+
         self.b_save_bmp = b_save_bmp
-        self.b_save_jpg = b_save_jpg
+        self.b_save_tif = b_save_tif
+        self.burst = False
+
         self.buf_save_image = buf_save_image
         self.h_thread_handle = h_thread_handle
         self.n_save_image_size = n_save_image_size
@@ -210,10 +209,9 @@ class CameraOperation():
             ret = self.obj_cam.MV_CC_SetFloatValue("AcquisitionFrameRate", float(frameRate))
             return ret
 
-    def Work_thread(self, index, root, panel, lock, printTimeLog=True, disp=True):
+    def Work_thread(self, index, root, panel, lock, printTimeLog=False, disp=True):
         stOutFrame = MV_FRAME_OUT()
         memset(byref(stOutFrame), 0, sizeof(stOutFrame))
-        img_buff = None
         buf_cache = None
         numArray = None
         while True:
@@ -225,26 +223,32 @@ class CameraOperation():
                 U.print_log(self.burst_num, "Get img")
 
             if 0 == ret:
-                if None == buf_cache:
-                    buf_cache = (c_ubyte * stOutFrame.stFrameInfo.nFrameLen)()
+                #if None == buf_cache:
+                buf_cache = (c_ubyte * stOutFrame.stFrameInfo.nFrameLen)()
 
-                self.st_frame_info = stOutFrame.stFrameInfo
-                cdll.msvcrt.memcpy(byref(buf_cache), stOutFrame.pBufAddr, self.st_frame_info.nFrameLen)
-                U.print_log("Camera[%d]:get one frame: Width[%d], Height[%d], nFrameNum[%d]" % (
-                    index, self.st_frame_info.nWidth, self.st_frame_info.nHeight, self.st_frame_info.nFrameNum))
-                self.n_save_image_size = self.st_frame_info.nWidth * self.st_frame_info.nHeight * 3 + 2048
-                if img_buff is None:
-                    img_buff = (c_ubyte * self.n_save_image_size)()
+                st_frame_info = stOutFrame.stFrameInfo
+                cdll.msvcrt.memcpy(byref(buf_cache), stOutFrame.pBufAddr, st_frame_info.nFrameLen)
 
-                if self.b_save_jpg or self.b_save_bmp:
+                if printTimeLog:
+                    U.print_log("Camera[%d]:get one frame: Width[%d], Height[%d], nFrameNum[%d]" % (
+                        index, st_frame_info.nWidth, st_frame_info.nHeight, st_frame_info.nFrameNum))
+
+                self.n_save_image_size = st_frame_info.nWidth * st_frame_info.nHeight * 3 + 2048
+
+                if self.b_save_tif or self.b_save_bmp:
                     self.burst_num += 1
-                    self.cache_queue.put((img_buff, stOutFrame.stFrameInfo))
-                    if self.b_save_jpg:
-                        self.Save_jpg(buf_cache)  # ch:保存Jpg图片 | en:Save Jpg
-                    if self.b_save_bmp:
-                        self.Save_Bmp(buf_cache)  # ch:保存Bmp图片 | en:Save Bmp
+                    self.cache_queue.put((buf_cache, st_frame_info))
 
-                if (not self.b_save_bmp) and (not self.b_save_jpg):
+                    if st_frame_info.nFrameNum != self.burst_num - 1:
+                        U.print_log("Missing {:d} frame".format(st_frame_info.nFrameNum - self.burst_num + 1))
+
+                    if self.b_save_tif:
+                        self.Save_Tif()  # ch:保存Jpg图片 | en:Save Jpg
+                    if self.b_save_bmp:
+                        self.Save_Bmp()  # ch:保存Bmp图片 | en:Save Bmp
+
+
+                if (not self.b_save_bmp) and (not self.b_save_tif):
                     self.burst_num = 0
 
                 if printTimeLog:
@@ -252,47 +256,13 @@ class CameraOperation():
 
             else:
                 U.print_log("Camera[" + str(index) + "]:no data, ret = " + U.To_hex_str(ret))
-                if self.b_exit == True:
+                if self.b_exit:
                     break
                 continue
 
             # 连拍时不显示图像
-            if disp and (not self.b_save_bmp and not self.b_save_jpg):
-                # 转换像素结构体赋值
-                stConvertParam = MV_CC_PIXEL_CONVERT_PARAM()
-                memset(byref(stConvertParam), 0, sizeof(stConvertParam))
-                stConvertParam.nWidth = self.st_frame_info.nWidth
-                stConvertParam.nHeight = self.st_frame_info.nHeight
-                stConvertParam.pSrcData = cast(buf_cache, POINTER(c_ubyte))
-                stConvertParam.nSrcDataLen = self.st_frame_info.nFrameLen
-                stConvertParam.enSrcPixelType = self.st_frame_info.enPixelType
-
-                # RGB直接显示
-                if PixelType_Gvsp_RGB8_Packed == self.st_frame_info.enPixelType:
-                    numArray = CameraOperation.Color_numpy(buf_cache, self.st_frame_info.nWidth,
-                                                           self.st_frame_info.nHeight)
-                else:
-                    nConvertSize = self.st_frame_info.nWidth * self.st_frame_info.nHeight * 3
-                    stConvertParam.enDstPixelType = PixelType_Gvsp_RGB8_Packed
-                    stConvertParam.pDstBuffer = (c_ubyte * nConvertSize)()
-                    stConvertParam.nDstBufferSize = nConvertSize
-                    ret = self.obj_cam.MV_CC_ConvertPixelType(stConvertParam)
-                    if ret != 0:
-                        continue
-                    cdll.msvcrt.memcpy(byref(img_buff), stConvertParam.pDstBuffer, nConvertSize)
-                    numArray = CameraOperation.Color_numpy(img_buff, self.st_frame_info.nWidth,
-                                                           self.st_frame_info.nHeight)
-
-                if printTimeLog:
-                    U.print_log(self.burst_num, "Process rgb img")
-                # 合并OpenCV到Tkinter界面中
-                current_image = Image.fromarray(numArray).resize((500, 500), Image.ANTIALIAS)
-                lock.acquire()  # 加锁
-                imgtk = ImageTk.PhotoImage(image=current_image, master=root)
-                panel.imgtk = imgtk
-                panel.config(image=imgtk)
-                root.obr = imgtk
-                lock.release()  # 释放锁
+            if disp and (not self.burst):
+                self.Disp_Img(buf_cache, st_frame_info, root, panel, lock, printTimeLog=printTimeLog)
 
             nRet = self.obj_cam.MV_CC_FreeImageBuffer(stOutFrame)
 
@@ -305,23 +275,66 @@ class CameraOperation():
                 break
 
 
-    def Save_Bmp(self, buf_cache, sequence=True):  # sequence: save BMPs until b_save_bmp is set to False
-        buf_cache, self.st_frame_info = self.cache_queue.get()
-        U.print_log("save")
+    def Disp_Img(self, buf_cache, st_frame_info, root, panel, lock, printTimeLog=False):
+        img_buff = None
+        if img_buff is None:
+            img_buff = (c_ubyte * self.n_save_image_size)()
+        # 转换像素结构体赋值
+        stConvertParam = MV_CC_PIXEL_CONVERT_PARAM()
+        memset(byref(stConvertParam), 0, sizeof(stConvertParam))
+        stConvertParam.nWidth = st_frame_info.nWidth
+        stConvertParam.nHeight = st_frame_info.nHeight
+        stConvertParam.pSrcData = cast(buf_cache, POINTER(c_ubyte))
+        stConvertParam.nSrcDataLen = st_frame_info.nFrameLen
+        stConvertParam.enSrcPixelType = st_frame_info.enPixelType
+
+        # RGB直接显示
+        if PixelType_Gvsp_RGB8_Packed == st_frame_info.enPixelType:
+            numArray = U.Color_numpy(buf_cache, st_frame_info.nWidth,
+                                     st_frame_info.nHeight)
+        else:
+            nConvertSize = st_frame_info.nWidth * st_frame_info.nHeight * 3
+            stConvertParam.enDstPixelType = PixelType_Gvsp_RGB8_Packed
+            stConvertParam.pDstBuffer = (c_ubyte * nConvertSize)()
+            stConvertParam.nDstBufferSize = nConvertSize
+            ret = self.obj_cam.MV_CC_ConvertPixelType(stConvertParam)
+
+            cdll.msvcrt.memcpy(byref(img_buff), stConvertParam.pDstBuffer, nConvertSize)
+            numArray = U.Color_numpy(img_buff, st_frame_info.nWidth,
+                                     st_frame_info.nHeight)
+
+        if printTimeLog:
+            U.print_log(self.burst_num, "Process rgb img")
+        # 合并OpenCV到Tkinter界面中
+        current_image = Image.fromarray(numArray).resize((500, 500), Image.ANTIALIAS)
+        lock.acquire()  # 加锁
+        imgtk = ImageTk.PhotoImage(image=current_image, master=root)
+        panel.imgtk = imgtk
+        panel.config(image=imgtk)
+        root.obr = imgtk
+        lock.release()  # 释放锁
+
+
+    def Save_Bmp(self):  # sequence: save BMPs until b_save_bmp is set to False
+
+        buf_cache, st_frame_info = self.cache_queue.get()
         if 0 == buf_cache:
             return
+
+        time_stamp = st_frame_info.nHostTimeStamp
         self.buf_save_image = None
-        file_path = self.IMGPATH + "IMG_" + str(self.st_frame_info.nFrameNum) + "_" + U.get_time_stamp() + ".bmp"
-        self.n_save_image_size = self.st_frame_info.nWidth * self.st_frame_info.nHeight * 3 + 2048
+        file_path = self.IMGPATH + "IMG_" + str(st_frame_info.nFrameNum) \
+                    + "_" + U.convert_time_stamp(time_stamp / 1000.0) + ".bmp"
+        self.n_save_image_size = st_frame_info.nWidth * st_frame_info.nHeight * 3 + 2048
         if self.buf_save_image is None:
             self.buf_save_image = (c_ubyte * self.n_save_image_size)()
 
         stParam = MV_SAVE_IMAGE_PARAM_EX()
         stParam.enImageType = MV_Image_Bmp;  # ch:需要保存的图像类型 | en:Image format to save
-        stParam.enPixelType = self.st_frame_info.enPixelType  # ch:相机对应的像素格式 | en:Camera pixel type
-        stParam.nWidth = self.st_frame_info.nWidth  # ch:相机对应的宽 | en:Width
-        stParam.nHeight = self.st_frame_info.nHeight  # ch:相机对应的高 | en:Height
-        stParam.nDataLen = self.st_frame_info.nFrameLen
+        stParam.enPixelType = st_frame_info.enPixelType  # ch:相机对应的像素格式 | en:Camera pixel type
+        stParam.nWidth = st_frame_info.nWidth  # ch:相机对应的宽 | en:Width
+        stParam.nHeight = st_frame_info.nHeight  # ch:相机对应的高 | en:Height
+        stParam.nDataLen = st_frame_info.nFrameLen
         stParam.pData = cast(buf_cache, POINTER(c_ubyte))
         stParam.pImageBuffer = cast(byref(self.buf_save_image), POINTER(c_ubyte))
         stParam.nBufferSize = self.n_save_image_size  # ch:存储节点的大小 | en:Buffer node size
@@ -330,45 +343,44 @@ class CameraOperation():
         if return_code != 0:
             # tkinter.messagebox.showerror('show error', 'save bmp fail! ret = ' + U.To_hex_str(return_code))
             U.print_log('save bmp fail! ret = ' + U.To_hex_str(return_code))
-            if not sequence:
-                self.b_save_bmp = False
-            return
-        file_open = open(file_path.encode('ascii'), 'wb+')
-        img_buff = (c_ubyte * stParam.nImageLen)()
-        try:
-            cdll.msvcrt.memcpy(byref(img_buff), stParam.pImageBuffer, stParam.nImageLen)
-            file_open.write(img_buff)
-            if not sequence:
-                self.b_save_bmp = False
-            # tkinter.messagebox.showinfo('show info', 'save bmp success!')
-            U.print_log('save bmp success!')
-        except:
-            if not sequence:
-                self.b_save_bmp = False
-            raise Exception("get one frame failed:%s" % e.message)
-        if None != img_buff:
-            del img_buff
-        if None != self.buf_save_image:
-            del self.buf_save_image
+        else:
+            file_open = open(file_path.encode('ascii'), 'wb+')
+            img_buff = (c_ubyte * stParam.nImageLen)()
+            try:
+                cdll.msvcrt.memcpy(byref(img_buff), stParam.pImageBuffer, stParam.nImageLen)
+                file_open.write(img_buff)
+                U.print_log("Seq. num", st_frame_info.nFrameNum, 'save bmp success!')
+            except:
+                raise Exception("get one frame failed:%s" % e.message)
+            if None != img_buff:
+                del img_buff
+            if None != self.buf_save_image:
+                del self.buf_save_image
 
+            if not self.burst:
+                self.b_save_bmp = False
 
+    def Save_Tif(self):  # sequence: save BMPs until b_save_bmp is set to False
 
-    def Save_Tif(self, buf_cache, sequence=True):  # sequence: save BMPs until b_save_bmp is set to False
-        U.print_log("save")
+        buf_cache, st_frame_info = self.cache_queue.get()
+
         if 0 == buf_cache:
             return
+
+        time_stamp = st_frame_info.nHostTimeStamp
         self.buf_save_image = None
-        file_path = self.IMGPATH + "IMG_" + str(self.st_frame_info.nFrameNum) + "_" + U.get_time_stamp() + ".tif"
-        self.n_save_image_size = self.st_frame_info.nWidth * self.st_frame_info.nHeight * 3 * 2 + 2048
+        file_path = self.IMGPATH + "IMG_" + str(st_frame_info.nFrameNum) \
+                    + "_" + U.convert_time_stamp(time_stamp / 1000.0) + ".tif"
+        self.n_save_image_size = st_frame_info.nWidth * st_frame_info.nHeight * 3 * 2 + 2048
         if self.buf_save_image is None:
             self.buf_save_image = (c_ubyte * self.n_save_image_size)()
 
         stParam = MV_SAVE_IMG_TO_FILE_PARAM()
-        stParam.enImageType = MV_Image_Tif;  # ch:需要保存的图像类型 | en:Image format to save
-        stParam.enPixelType = self.st_frame_info.enPixelType  # ch:相机对应的像素格式 | en:Camera pixel type
-        stParam.nWidth = self.st_frame_info.nWidth  # ch:相机对应的宽 | en:Width
-        stParam.nHeight = self.st_frame_info.nHeight  # ch:相机对应的高 | en:Height
-        stParam.nDataLen = self.st_frame_info.nFrameLen
+        stParam.enImageType = MV_Image_Tif  # ch:需要保存的图像类型 | en:Image format to save
+        stParam.enPixelType = st_frame_info.enPixelType  # ch:相机对应的像素格式 | en:Camera pixel type
+        stParam.nWidth = st_frame_info.nWidth  # ch:相机对应的宽 | en:Width
+        stParam.nHeight = st_frame_info.nHeight  # ch:相机对应的高 | en:Height
+        stParam.nDataLen = st_frame_info.nFrameLen
         stParam.pData = cast(buf_cache, POINTER(c_ubyte))
         stParam.pImageBuffer = cast(byref(self.buf_save_image), POINTER(c_ubyte))
         stParam.nBufferSize = self.n_save_image_size  # ch:存储节点的大小 | en:Buffer node size
@@ -376,62 +388,13 @@ class CameraOperation():
 
         return_code = self.obj_cam.MV_CC_SaveImageToFile(stParam)
         if return_code != 0:
-            # tkinter.messagebox.showerror('show error', 'save bmp fail! ret = ' + U.To_hex_str(return_code))
             U.print_log('save TIF fail! ret = ' + U.To_hex_str(return_code))
-            if not sequence:
-                self.b_save_bmp = False
             return
 
+        if None != self.buf_save_image:
+            del self.buf_save_image
+
+        if not self.burst:
+            self.b_save_tif = False
+
         U.print_log('save TIF success!')
-
-
-    @staticmethod
-    def Is_mono_data(enGvspPixelType):
-        if PixelType_Gvsp_Mono8 == enGvspPixelType or PixelType_Gvsp_Mono10 == enGvspPixelType \
-                or PixelType_Gvsp_Mono10_Packed == enGvspPixelType or PixelType_Gvsp_Mono12 == enGvspPixelType \
-                or PixelType_Gvsp_Mono12_Packed == enGvspPixelType:
-            return True
-        else:
-            return False
-
-    @staticmethod
-    def Is_color_data(enGvspPixelType):
-        if PixelType_Gvsp_BayerGR8 == enGvspPixelType or PixelType_Gvsp_BayerRG8 == enGvspPixelType \
-                or PixelType_Gvsp_BayerGB8 == enGvspPixelType or PixelType_Gvsp_BayerBG8 == enGvspPixelType \
-                or PixelType_Gvsp_BayerGR10 == enGvspPixelType or PixelType_Gvsp_BayerRG10 == enGvspPixelType \
-                or PixelType_Gvsp_BayerGB10 == enGvspPixelType or PixelType_Gvsp_BayerBG10 == enGvspPixelType \
-                or PixelType_Gvsp_BayerGR12 == enGvspPixelType or PixelType_Gvsp_BayerRG12 == enGvspPixelType \
-                or PixelType_Gvsp_BayerGB12 == enGvspPixelType or PixelType_Gvsp_BayerBG12 == enGvspPixelType \
-                or PixelType_Gvsp_BayerGR10_Packed == enGvspPixelType or PixelType_Gvsp_BayerRG10_Packed == enGvspPixelType \
-                or PixelType_Gvsp_BayerGB10_Packed == enGvspPixelType or PixelType_Gvsp_BayerBG10_Packed == enGvspPixelType \
-                or PixelType_Gvsp_BayerGR12_Packed == enGvspPixelType or PixelType_Gvsp_BayerRG12_Packed == enGvspPixelType \
-                or PixelType_Gvsp_BayerGB12_Packed == enGvspPixelType or PixelType_Gvsp_BayerBG12_Packed == enGvspPixelType \
-                or PixelType_Gvsp_YUV422_Packed == enGvspPixelType or PixelType_Gvsp_YUV422_YUYV_Packed == enGvspPixelType:
-            return True
-        else:
-            return False
-
-    @staticmethod
-    def Mono_numpy(data, nWidth, nHeight):
-        data_ = np.frombuffer(data, count=int(nWidth * nHeight), dtype=np.uint8, offset=0)
-        data_mono_arr = data_.reshape(nHeight, nWidth)
-        numArray = np.zeros([nHeight, nWidth, 1], "uint8")
-        numArray[:, :, 0] = data_mono_arr
-        return numArray
-
-    @staticmethod
-    def Color_numpy(data, nWidth, nHeight):
-        data_ = np.frombuffer(data, count=int(nWidth * nHeight * 3), dtype=np.uint8, offset=0)
-        data_r = data_[0:nWidth * nHeight * 3:3]
-        data_g = data_[1:nWidth * nHeight * 3:3]
-        data_b = data_[2:nWidth * nHeight * 3:3]
-
-        data_r_arr = data_r.reshape(nHeight, nWidth)
-        data_g_arr = data_g.reshape(nHeight, nWidth)
-        data_b_arr = data_b.reshape(nHeight, nWidth)
-        numArray = np.zeros([nHeight, nWidth, 3], "uint8")
-
-        numArray[:, :, 0] = data_r_arr
-        numArray[:, :, 1] = data_g_arr
-        numArray[:, :, 2] = data_b_arr
-        return numArray

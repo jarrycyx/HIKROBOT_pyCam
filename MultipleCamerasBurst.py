@@ -16,7 +16,7 @@ import Utils as U
 
 # DEFAULT_TRIGGER = 'triggermode'
 
-EXP_TIME = 20000
+EXP_TIME = 4000
 EXP_GAIN = 10
 FRAME_RATE = 5
 DEFAULT_TRIGGER = 'continuous'
@@ -65,7 +65,7 @@ if __name__ == "__main__":
         tLayerType = MV_GIGE_DEVICE | MV_USB_DEVICE
         ret = MvCamera.MV_CC_EnumDevices(tLayerType, deviceList)
         if ret != 0:
-            tkinter.messagebox.showerror('show error', 'enum devices fail! ret = ' + ToHexStr(ret))
+            tkinter.messagebox.showerror('show error', 'enum devices fail! ret = ' + U.ToHexStr(ret))
 
         # 显示相机个数
         text_number_of_devices.delete(1.0, tk.END)
@@ -257,29 +257,33 @@ if __name__ == "__main__":
         global obj_cam_operation
         for i in range(0, nOpenDevSuccess):
             obj_cam_operation[i].b_save_bmp = True
+            obj_cam_operation[i].burst = False
 
 
-    # ch:保存jpg图片 | en:save jpg image
-    def jpg_save():
+    # ch:保存TIF图片 | en:save TIF image
+    def tif_save():
         global obj_cam_operation
         for i in range(0, nOpenDevSuccess):
-            obj_cam_operation.b_save_jpg = True
+            obj_cam_operation[i].b_save_tif = True
+            obj_cam_operation[i].burst = False
 
 
     # ch:保存bmp图片序列 | en:save bmp image
-    def bmp_sequence_start():
+    def sequence_start():
         stop_grabbing()
         start_grabbing()
         global obj_cam_operation
         for i in range(0, nOpenDevSuccess):
             obj_cam_operation[i].b_save_bmp = True
+            obj_cam_operation[i].burst = True
 
 
     # ch:停止bmp序列采集 | en:save jpg image
-    def bmp_sequence_stop():
+    def sequence_stop():
         global obj_cam_operation
         for i in range(0, nOpenDevSuccess):
             obj_cam_operation[i].b_save_bmp = False
+            obj_cam_operation[i].burst = False
 
 
     def quick_start():
@@ -326,12 +330,12 @@ if __name__ == "__main__":
 
     btn_save_bmp = tk.Button(window, text='Save BMP', width=15, height=1, command=bmp_save)
     btn_save_bmp.place(x=20, y=300)
-    btn_save_jpg = tk.Button(window, text='Save JPG', width=15, height=1, command=jpg_save)
+    btn_save_jpg = tk.Button(window, text='Save TIFF', width=15, height=1, command=tif_save)
     btn_save_jpg.place(x=160, y=300)
 
-    btn_save_bmp = tk.Button(window, text='BMP Seq. Start', width=15, height=1, command=bmp_sequence_start)
+    btn_save_bmp = tk.Button(window, text='Burst Start', width=15, height=1, command=sequence_start)
     btn_save_bmp.place(x=20, y=350)
-    btn_save_jpg = tk.Button(window, text='BMP Seq. Stop', width=15, height=1, command=bmp_sequence_stop)
+    btn_save_jpg = tk.Button(window, text='Burst Stop', width=15, height=1, command=sequence_stop)
     btn_save_jpg.place(x=160, y=350)
 
     model_val.set(0)
