@@ -15,7 +15,7 @@ from PIL import Image, ImageTk
 from ctypes import *
 from tkinter import ttk
 
-import datetime
+import time
 # sys.path.append("./MvImport")
 from MvImport.MvCameraControl_class import *
 
@@ -43,9 +43,9 @@ def Stop_thread(thread):
 class CameraOperation():
 
     def __init__(self, obj_cam, st_device_list, n_connect_num=0, b_open_device=False, b_start_grabbing=False,
-                 h_thread_handle=None, \
+                 h_thread_handle=None,
                  b_thread_closed=False, st_frame_info=None, b_exit=False, b_save_bmp=False, b_save_tif=False,
-                 buf_save_image=None, \
+                 buf_save_image=None,
                  n_save_image_size=0, frame_rate=0, exposure_time=0, gain=0):
 
         self.obj_cam = obj_cam
@@ -63,6 +63,7 @@ class CameraOperation():
 
         self.buf_save_image = buf_save_image
         self.h_thread_handle = h_thread_handle
+        self.cache_thread_handle = None
         self.n_save_image_size = n_save_image_size
         self.frame_rate = frame_rate
         self.exposure_time = exposure_time
@@ -71,7 +72,8 @@ class CameraOperation():
         self.burst_num = 0
         self.IMGPATH = "C:/Users/jarrycyx/Desktop/HIK_IMG_DIR/"
 
-        self.cache_queue = queue.Queue()
+        self.cache_queue = []  # 图像写入缓存
+        self.enable_save_cache = True  # 是否使用写入缓存
 
     def Open_device(self):
         if not self.b_open_device:
@@ -126,14 +128,21 @@ class CameraOperation():
                 self.h_thread_handle = threading.Thread(target=CameraOperation.Work_thread,
                                                         args=(self, index, root, panel, lock))
                 self.h_thread_handle.start()
+
+                if self.enable_save_cache:
+                    self.cache_thread_handle = threading.Thread(target=CameraOperation.Save_Img_Thread,
+                                                                args=(self, lock))
+                    self.cache_thread_handle.start()
+
                 self.b_thread_closed = True
             except:
                 tkinter.messagebox.showerror('show error', 'error: unable to start thread')
-                False == self.b_start_grabbing
+                self.b_start_grabbing = False
+
             return ret
 
     def Stop_grabbing(self):
-        if True == self.b_start_grabbing and self.b_open_device == True:
+        if self.b_start_grabbing and self.b_open_device:
             # 退出线程
             ret = 0
             if self.b_thread_closed:
@@ -223,7 +232,7 @@ class CameraOperation():
                 U.print_log(self.burst_num, "Get img")
 
             if 0 == ret:
-                #if None == buf_cache:
+                # if None == buf_cache:
                 buf_cache = (c_ubyte * stOutFrame.stFrameInfo.nFrameLen)()
 
                 st_frame_info = stOutFrame.stFrameInfo
@@ -237,16 +246,19 @@ class CameraOperation():
 
                 if self.b_save_tif or self.b_save_bmp:
                     self.burst_num += 1
-                    self.cache_queue.put((buf_cache, st_frame_info))
+                    self.cache_queue.append((buf_cache, st_frame_info, ))
 
                     if st_frame_info.nFrameNum != self.burst_num - 1:
                         U.print_log("Missing {:d} frame".format(st_frame_info.nFrameNum - self.burst_num + 1))
 
-                    if self.b_save_tif:
-                        self.Save_Tif()  # ch:保存Jpg图片 | en:Save Jpg
-                    if self.b_save_bmp:
-                        self.Save_Bmp()  # ch:保存Bmp图片 | en:Save Bmp
-
+                    # 获取图像同时写入文件，而不使用缓存，速度较慢
+                    if not self.enable_save_cache:
+                        if self.b_save_tif:
+                            self.Save_Tif()  # ch:保存Jpg图片 | en:Save Jpg
+                        if self.b_save_bmp:
+                            self.Save_Bmp()  # ch:保存Bmp图片 | en:Save Bmp
+                else:
+                    self.burst_num = 0
 
                 if (not self.b_save_bmp) and (not self.b_save_tif):
                     self.burst_num = 0
@@ -270,10 +282,24 @@ class CameraOperation():
                 U.print_log(self.burst_num, "Display rgb img")
 
             if self.b_exit:
-                if img_buff is not None:
-                    del img_buff
                 break
 
+    def Save_Img_Thread(self, lock):
+        while True:
+            time.sleep(0.04)
+            if len(self.cache_queue) > 0:
+
+                lock.acquire()
+                if self.b_save_tif:
+                    self.Save_Tif()  # ch:保存Jpg图片 | en:Save Jpg
+                if self.b_save_bmp:
+                    self.Save_Bmp()  # ch:保存Bmp图片 | en:Save Bmp
+                lock.release()
+
+                U.print_log("Remaining", len(self.cache_queue), "imgs to save")
+
+            if self.b_exit:
+                break
 
     def Disp_Img(self, buf_cache, st_frame_info, root, panel, lock, printTimeLog=False):
         img_buff = None
@@ -314,10 +340,9 @@ class CameraOperation():
         root.obr = imgtk
         lock.release()  # 释放锁
 
-
     def Save_Bmp(self):  # sequence: save BMPs until b_save_bmp is set to False
 
-        buf_cache, st_frame_info = self.cache_queue.get()
+        buf_cache, st_frame_info = self.cache_queue.pop(0)
         if 0 == buf_cache:
             return
 
@@ -325,6 +350,7 @@ class CameraOperation():
         self.buf_save_image = None
         file_path = self.IMGPATH + "IMG_" + str(st_frame_info.nFrameNum) \
                     + "_" + U.convert_time_stamp(time_stamp / 1000.0) + ".bmp"
+
         self.n_save_image_size = st_frame_info.nWidth * st_frame_info.nHeight * 3 + 2048
         if self.buf_save_image is None:
             self.buf_save_image = (c_ubyte * self.n_save_image_size)()
@@ -362,7 +388,7 @@ class CameraOperation():
 
     def Save_Tif(self):  # sequence: save BMPs until b_save_bmp is set to False
 
-        buf_cache, st_frame_info = self.cache_queue.get()
+        buf_cache, st_frame_info = self.cache_queue.pop(0)
 
         if 0 == buf_cache:
             return
@@ -397,4 +423,4 @@ class CameraOperation():
         if not self.burst:
             self.b_save_tif = False
 
-        U.print_log('save TIF success!')
+        U.print_log("Seq. num", st_frame_info.nFrameNum, 'save bmp success!')

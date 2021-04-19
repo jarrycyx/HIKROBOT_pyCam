@@ -18,7 +18,7 @@ import Utils as U
 
 EXP_TIME = 4000
 EXP_GAIN = 10
-FRAME_RATE = 5
+FRAME_RATE = 15
 DEFAULT_TRIGGER = 'continuous'
 
 
