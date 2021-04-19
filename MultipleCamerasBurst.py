@@ -10,14 +10,15 @@ from tkinter import ttk
 from MvImport.MvCameraControl_class import *
 from CamOperation_class import *
 from PIL import Image, ImageTk
+import threading
 
 import Utils as U
 
 
 # DEFAULT_TRIGGER = 'triggermode'
 
-EXP_TIME = 4000
-EXP_GAIN = 10
+EXP_TIME = 1000
+EXP_GAIN = 20
 FRAME_RATE = 15
 DEFAULT_TRIGGER = 'continuous'
 
@@ -55,6 +56,8 @@ if __name__ == "__main__":
 
     panel3 = Label(page)
     panel3.place(x=810, y=520, height=500, width=500)
+
+    panels = [panel, panel1, panel2, panel3]
 
 
     # ch:枚举相机 | en:enum devices
@@ -127,7 +130,7 @@ if __name__ == "__main__":
         for i in range(0, deviceList.nDeviceNum):
             camObj = MvCamera()
             strName = str(devList[i])
-            obj_cam_operation.append(CameraOperation(camObj, deviceList, i))
+            obj_cam_operation.append(CameraOperation(camObj, deviceList, i, cam_name=strName))
             ret = obj_cam_operation[nOpenDevSuccess].Open_device()
             if 0 != ret:
                 obj_cam_operation.pop()
@@ -150,18 +153,20 @@ if __name__ == "__main__":
         global nOpenDevSuccess
         lock = threading.Lock()  # 申请一把锁
         ret = 0
+        threads = []
+
         for i in range(0, nOpenDevSuccess):
-            if 0 == i:
-                ret = obj_cam_operation[i].Start_grabbing(i, window, panel, lock)
-            elif 1 == i:
-                ret = obj_cam_operation[i].Start_grabbing(i, window, panel1, lock)
-            elif 2 == i:
-                ret = obj_cam_operation[i].Start_grabbing(i, window, panel2, lock)
-            elif 3 == i:
-                ret = obj_cam_operation[i].Start_grabbing(i, window, panel3, lock)
-            if 0 != ret:
-                tkinter.messagebox.showerror('show error',
-                                             'camera:' + str(i) + ',start grabbing fail! ret = ' + U.To_hex_str(ret))
+            # ret = obj_cam_operation[i].Start_grabbing(i, window, panels[i], lock)
+            # if 0 != ret:
+            #     tkinter.messagebox.showerror('show error',
+            #                                  'camera:' + str(i) + ',start grabbing fail! ret = ' + U.To_hex_str(ret))
+
+            start_grabbing_thread = threading.Thread(target=obj_cam_operation[i].Start_grabbing, args=(i, window, panels[i], lock))
+            start_grabbing_thread.start()
+            threads.append(start_grabbing_thread)
+
+        for t in threads:
+            t.join()
 
 
     # ch:停止取流 | en:Stop grab image
@@ -274,7 +279,7 @@ if __name__ == "__main__":
         start_grabbing()
         global obj_cam_operation
         for i in range(0, nOpenDevSuccess):
-            obj_cam_operation[i].b_save_bmp = True
+            obj_cam_operation[i].b_save_tif = True
             obj_cam_operation[i].burst = True
 
 
@@ -282,7 +287,7 @@ if __name__ == "__main__":
     def sequence_stop():
         global obj_cam_operation
         for i in range(0, nOpenDevSuccess):
-            obj_cam_operation[i].b_save_bmp = False
+            obj_cam_operation[i].b_save_tif = False
             obj_cam_operation[i].burst = False
 
 
