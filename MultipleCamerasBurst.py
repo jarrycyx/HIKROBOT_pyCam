@@ -17,7 +17,7 @@ import Utils as U
 
 # DEFAULT_TRIGGER = 'triggermode'
 
-EXP_TIME = 1000
+EXP_TIME = 100
 EXP_GAIN = 20
 FRAME_RATE = 15
 DEFAULT_TRIGGER = 'continuous'
