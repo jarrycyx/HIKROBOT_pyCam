@@ -15,7 +15,7 @@ from PIL import Image, ImageTk
 from ctypes import *
 from tkinter import ttk
 import copy
-import time
+import time, os
 # sys.path.append("./MvImport")
 from MvImport.MvCameraControl_class import *
 
@@ -71,7 +71,8 @@ class CameraOperation:
         self.gain = gain
 
         self.burst_num = 0
-        self.IMGPATH = "C:/Users/jarrycyx/Desktop/HIK_IMG_DIR/"
+        self.IMGPATH_ROOT = "C:/Users/jarrycyx/Desktop/HIK_IMG_DIR/"
+        self.IMGPATH = self.IMGPATH_ROOT
 
         self.cache_queue = []  # 图像写入缓存
         self.enable_save_cache = True  # 是否使用写入缓存
@@ -118,6 +119,10 @@ class CameraOperation:
             return 0
 
     def Start_grabbing(self, index, root, panel, lock):
+        self.IMGPATH = self.IMGPATH_ROOT + self.cam_name + "_" + U.get_time_stamp()[:-7] + "/"
+
+        os.mkdir(self.IMGPATH)
+
         if False == self.b_start_grabbing and True == self.b_open_device:
             self.b_exit = False
             ret = self.obj_cam.MV_CC_StartGrabbing()
@@ -385,7 +390,7 @@ class CameraOperation:
                 file_open.write(img_buff)
                 U.print_log("Seq. num", nFrameNum, 'save bmp success!')
             except:
-                raise Exception("get one frame failed:%s" % e.message)
+                raise Exception("get one frame failed")
             if None != img_buff:
                 del img_buff
             if None != buf_cache:
