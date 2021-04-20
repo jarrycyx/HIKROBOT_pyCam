@@ -119,9 +119,9 @@ class CameraOperation:
             return 0
 
     def Start_grabbing(self, index, root, panel, lock):
-        self.IMGPATH = self.IMGPATH_ROOT + self.cam_name + "_" + U.get_time_stamp()[:-7] + "/"
+        self.IMGPATH = self.IMGPATH_ROOT + self.cam_name + "/" + U.get_time_stamp()[:-7] + "/"
 
-        os.mkdir(self.IMGPATH)
+        os.makedirs(self.IMGPATH)
 
         if False == self.b_start_grabbing and True == self.b_open_device:
             self.b_exit = False
